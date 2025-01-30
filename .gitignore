@@ -1,0 +1,50 @@
+# Dependencies
+node_modules/
+__pycache__/
+*.py[cod]
+*$py.class
+venv/
+env/
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# Testing
+coverage/
+.pnp
+.pnp.js
+
+# Firebase
+**/.firebase/
+**/firebase-debug.log
+/src/firebase-debug.log
+
+# Production
+/build
+/archive
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+backend-archive/
+frontend-archive/
