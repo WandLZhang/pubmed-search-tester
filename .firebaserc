@@ -1,0 +1,14 @@
+{
+  "projects": {
+    "default": "gemini-med-lit-review"
+  },
+  "targets": {
+    "gemini-med-lit-review": {
+      "hosting": {
+        "pubmed-search-tester": [
+          "pubmed-search-tester"
+        ]
+      }
+    }
+  }
+}
