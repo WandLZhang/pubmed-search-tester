@@ -1,5 +1,27 @@
 const API_BASE_URL = 'https://us-central1-gemini-med-lit-review.cloudfunctions.net';
 
+export const extractDisease = async (text) => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/pubmed-search-tester-extract-disease`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ text }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP error! status: ${response.status}`);
+    }
+
+    const data = await response.text();
+    return data.trim();
+  } catch (error) {
+    console.error('Error:', error);
+    throw error;
+  }
+};
+
 export const extractEvents = async (text, promptContent) => {
   try {
     const response = await fetch(`${API_BASE_URL}/pubmed-search-tester-extract-events`, {

@@ -5,7 +5,7 @@ import ArticleTable from './components/ArticleTable';
 import EditPromptModal from './components/modals/EditPromptModal';
 import EditMethodologyModal from './components/modals/EditMethodologyModal';
 import ArticleModal from './components/modals/ArticleModal';
-import { extractEvents, retrieveAndRankArticles } from './services/api';
+import { extractEvents, extractDisease, retrieveAndRankArticles } from './services/api';
 
 function App() {
   // Case notes state
@@ -21,7 +21,8 @@ Diagnostic tests:
 						 							
   WES and RNAseq of the current relapse sample is pending.`);
 
-  // Extracted events state
+  // Extracted data state
+  const [extractedDisease, setExtractedDisease] = useState('');
   const [extractedEvents, setExtractedEvents] = useState([]);
   const [isProcessing, setIsProcessing] = useState(false);
 
@@ -145,10 +146,15 @@ Extract actionable events from the provided patient information, such as gene fu
   const handleExtract = async () => {
     try {
       setIsProcessing(true);
-      const events = await extractEvents(caseNotes, promptContent);
+      const [disease, events] = await Promise.all([
+        extractDisease(caseNotes),
+        extractEvents(caseNotes, promptContent)
+      ]);
+      setExtractedDisease(disease);
       setExtractedEvents(events);
     } catch (error) {
       console.error('Error:', error);
+      setExtractedDisease('Error extracting disease. Please try again.');
       setExtractedEvents(['Error extracting events. Please try again.']);
     } finally {
       setIsProcessing(false);
@@ -288,25 +294,48 @@ Extract actionable events from the provided patient information, such as gene fu
               </div>
             </div>
 
-            {/* List of actionable events section */}
+            {/* Extracted disease and events section */}
             <div className="bg-white shadow rounded-lg p-6">
               <div className="mb-4">
-                <h2 className="text-lg font-medium text-gray-700">3. List of actionable events</h2>
+                <h2 className="text-lg font-medium text-gray-700">3. Extracted disease and events</h2>
               </div>
-              <div className="min-h-[100px] p-3 bg-gray-50 rounded-lg">
-                {extractedEvents.length > 0 ? (
-                  <textarea
-                    value={extractedEvents.join('" "')}
-                    onChange={(e) => {
-                      const text = e.target.value;
-                      const events = text.split('"').filter(event => event.trim() && event !== ' ');
-                      setExtractedEvents(events);
-                    }}
-                    className="w-full h-24 p-2 border border-gray-300 rounded focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
-                  />
-                ) : (
-                  <p className="text-gray-500 italic">Click "Extract" to analyze case notes and generate actionable events.</p>
-                )}
+              <div className="space-y-4">
+                {/* Extracted disease */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Extracted disease</label>
+                  <div className="min-h-[40px] p-3 bg-gray-50 rounded-lg">
+                    {extractedDisease ? (
+                      <input
+                        type="text"
+                        value={extractedDisease}
+                        onChange={(e) => setExtractedDisease(e.target.value)}
+                        className="w-full bg-transparent border-none focus:ring-0 p-0"
+                      />
+                    ) : (
+                      <p className="text-gray-500 italic">Disease will appear here after extraction...</p>
+                    )}
+                  </div>
+                </div>
+                
+                {/* Extracted events */}
+                <div>
+                  <label className="block text-sm font-medium text-gray-700 mb-2">Extracted actionable events</label>
+                  <div className="min-h-[100px] p-3 bg-gray-50 rounded-lg">
+                    {extractedEvents.length > 0 ? (
+                      <textarea
+                        value={extractedEvents.join('" "')}
+                        onChange={(e) => {
+                          const text = e.target.value;
+                          const events = text.split('"').filter(event => event.trim() && event !== ' ');
+                          setExtractedEvents(events);
+                        }}
+                        className="w-full bg-transparent border-none focus:ring-0 p-0 min-h-[80px]"
+                      />
+                    ) : (
+                      <p className="text-gray-500 italic">Click "Extract" to analyze case notes and generate actionable events.</p>
+                    )}
+                  </div>
+                </div>
               </div>
             </div>
           </div>
