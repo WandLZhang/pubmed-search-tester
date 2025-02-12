@@ -19,29 +19,34 @@ client = genai.Client(
 )
 bq_client = bigquery.Client(project="playground-439016")
 
-def calculate_points(metadata):
+def calculate_points(metadata, query_disease=None):
     """Calculate points based on article metadata and return both total and breakdown."""
     points = 0
     breakdown = {}
     
-    # Pediatric Focus: +10 points
-    if metadata.get('pediatric_focus'):
-        points += 10
-        breakdown['pediatric_focus'] = 10
+    # Disease Match: +50 points
+    if metadata.get('disease_match'):
+        points += 50
+        breakdown['disease_match'] = 50
     
-    # Paper Type: +10 points for clinical trial, -5 points for review
+    # Pediatric Focus: +20 points
+    if metadata.get('pediatric_focus'):
+        points += 20
+        breakdown['pediatric_focus'] = 20
+    
+    # Paper Type: +40 points for clinical trial, -5 points for review
     paper_type = metadata.get('paper_type', '').lower()
     if 'clinical trial' in paper_type:
-        points += 10
-        breakdown['paper_type'] = 10
+        points += 40
+        breakdown['paper_type'] = 40
     elif 'review' in paper_type:
         points -= 5
         breakdown['paper_type'] = -5
     
-    # Actionable Events: +5 points per event
+    # Actionable Events: +15 points per event
     actionable_events = metadata.get('actionable_events', [])
     if actionable_events:
-        event_points = len(actionable_events) * 5
+        event_points = len(actionable_events) * 15
         points += event_points
         breakdown['actionable_events'] = event_points
     
@@ -50,12 +55,10 @@ def calculate_points(metadata):
         points += 5
         breakdown['drugs_tested'] = 5
     
-    # Drug Results: +5 points per result
-    drug_results = metadata.get('drug_results', [])
-    if drug_results:
-        result_points = len(drug_results) * 5
-        points += result_points
-        breakdown['drug_results'] = result_points
+    # Drug Results: +50 points for actual positive treatment shown
+    if metadata.get('treatment_shown'):
+        points += 50
+        breakdown['treatment_shown'] = 50
     
     # Cell Studies: +5 points
     if metadata.get('cell_studies'):
@@ -94,10 +97,13 @@ def calculate_points(metadata):
     
     return points, breakdown
 
-def create_gemini_prompt(article_text, pmid, methodology_content=None):
+def create_gemini_prompt(article_text, pmid, methodology_content=None, disease=None):
+    # Add disease context to the prompt if provided
+    disease_context = f"\nThe patient's disease is: {disease}\n" if disease else ""
+    
     # Default methodology if none provided
     if not methodology_content:
-        methodology_content = """You are an expert pediatric oncologist and you are the chair of the International Leukemia Tumor Board. Your goal is to evaluate full research articles related to oncology, especially those concerning pediatric leukemia, to identify potential advancements in treatment and understanding of the disease.
+        methodology_content = f"""You are an expert pediatric oncologist and you are the chair of the International Leukemia Tumor Board. Your goal is to evaluate full research articles related to oncology, especially those concerning pediatric leukemia, to identify potential advancements in treatment and understanding of the disease.{disease_context}
 
 <Article>
 {article}
@@ -105,6 +111,10 @@ def create_gemini_prompt(article_text, pmid, methodology_content=None):
 
 <Instructions>
 Your task is to read the provided full article and extract key information, and then assess the article's relevance and potential impact. You will generate a JSON object containing metadata and analysis. Please use a consistent JSON structure.
+
+As an expert oncologist:
+1. Evaluate if the article's disease focus matches the patient's disease. Set disease_match to true if the article's cancer type is relevant to the patient's condition.
+2. Analyze treatment outcomes. Set treatment_shown to true if the article demonstrates positive treatment results.
 
 Please analyze the article and provide a JSON response with the following structure:
 
@@ -115,10 +125,12 @@ Please analyze the article and provide a JSON response with the following struct
     "cancer_focus": true/false,
     "pediatric_focus": true/false,
     "type_of_cancer": "...",
+    "disease_match": true/false,      // Set to true if article's disease is relevant to patient's condition
     "paper_type": "...",
     "actionable_events": ["...", "..."],
     "drugs_tested": true/false,
-    "drug_results": ["...", "..."],
+    "drug_results": ["...", "..."],   // List of treatment outcomes
+    "treatment_shown": true/false,    // Set to true if article shows positive treatment results
     "cell_studies": true/false,
     "mice_studies": true/false,
     "case_report": true/false,
@@ -134,25 +146,25 @@ Important: The response must be valid JSON and follow this exact structure. Do n
     # Log the article text format
     logger.info(f"Article text to be inserted:\n{article_text}")
     
-    # Replace article placeholder with actual text
+    # Replace placeholders
     prompt = methodology_content.replace("{article}", article_text)
+    prompt = prompt.replace("{disease}", disease if disease else "")
     
     # Log the final prompt
     logger.info(f"Final prompt with article inserted:\n{prompt}")
     
     return prompt
 
-def analyze_with_gemini(article_text, pmid, methodology_content=None):
+def analyze_with_gemini(article_text, pmid, methodology_content=None, disease=None):
     # Create prompt with JSON-only instruction
-    prompt = create_gemini_prompt(article_text, pmid, methodology_content)
+    prompt = create_gemini_prompt(article_text, pmid, methodology_content, disease)
     prompt += "\n\nIMPORTANT: Return ONLY the raw JSON object. Do not include any explanatory text, markdown formatting, or code blocks. The response should start with '{' and end with '}' with no other characters before or after."
     
     # Configure Gemini
-    model = "gemini-2.0-flash-exp"
+    model = "gemini-2.0-flash-001"
     generate_content_config = types.GenerateContentConfig(
         temperature=0,
         top_p=0.95,
-        candidate_count=1,
         max_output_tokens=8192,
         response_modalities=["TEXT"],
         safety_settings=[
@@ -249,8 +261,8 @@ def analyze_with_gemini(article_text, pmid, methodology_content=None):
             metadata['PMID'] = pmid
             metadata['link'] = f'https://pubmed.ncbi.nlm.nih.gov/{pmid}/'
             
-            # Calculate points
-            points, point_breakdown = calculate_points(metadata)
+            # Calculate points with disease information
+            points, point_breakdown = calculate_points(metadata, disease)
             metadata['overall_points'] = points
             metadata['point_breakdown'] = point_breakdown
             
@@ -293,7 +305,7 @@ def create_bq_query(events_text):
     ORDER BY distance ASC;
     """
 
-def stream_response(events_text, methodology_content=None):
+def stream_response(events_text, methodology_content=None, disease=None):
     try:
         # Execute BigQuery
         # Execute BigQuery and log results
@@ -331,7 +343,7 @@ def stream_response(events_text, methodology_content=None):
             
             # Analyze with Gemini and prepare complete response object
             try:
-                analysis = analyze_with_gemini(content, pmid, methodology_content)
+                analysis = analyze_with_gemini(content, pmid, methodology_content, disease)
                 if analysis:
                     # Create complete response object
                     response_obj = {
@@ -416,11 +428,12 @@ def analyze_articles(request):
         if not events_text:
             return jsonify({'error': 'Missing events_text field'}), 400, headers
 
-        # Get methodology content if provided
+        # Get methodology content and disease if provided
         methodology_content = request_json.get('methodology_content')
+        disease = request_json.get('disease')
 
         return Response(
-            stream_response(events_text, methodology_content),
+            stream_response(events_text, methodology_content, disease),
             headers=headers,
             mimetype='text/event-stream'
         )

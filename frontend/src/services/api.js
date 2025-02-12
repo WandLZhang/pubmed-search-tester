@@ -44,7 +44,7 @@ export const extractEvents = async (text, promptContent) => {
   }
 };
 
-export const retrieveAndRankArticles = async (eventsText, methodologyContent, onProgress) => {
+export const retrieveAndRankArticles = async (eventsText, methodologyContent, disease, onProgress) => {
   try {
     const response = await fetch(`${API_BASE_URL}/pubmed-search-tester-analyze-articles`, {
       method: 'POST',
@@ -53,7 +53,8 @@ export const retrieveAndRankArticles = async (eventsText, methodologyContent, on
       },
       body: JSON.stringify({ 
         events_text: eventsText,
-        methodology_content: methodologyContent 
+        methodology_content: methodologyContent,
+        disease: disease
       }),
     });
 

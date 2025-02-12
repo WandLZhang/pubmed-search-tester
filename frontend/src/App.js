@@ -40,6 +40,8 @@ Diagnostic tests:
   // Content states
   const [methodologyContent, setMethodologyContent] = useState(`You are an expert pediatric oncologist and you are the chair of the International Leukemia Tumor Board. Your goal is to evaluate full research articles related to oncology, especially those concerning pediatric leukemia, to identify potential advancements in treatment and understanding of the disease.
 
+The patient's disease is: {disease}
+
 <Article>
 {article}
 </Article>
@@ -48,11 +50,12 @@ Diagnostic tests:
 Your task is to read the provided full article and extract key information, and then assess the article's relevance and potential impact. You will generate a JSON object containing metadata and a point-based assessment of the article's value. Please use a consistent JSON structure.
 
 The scoring system will assess the following (not necessarily exhaustive and inferred):
-*   **Clinical Relevance:** Clinical trials score highest, followed by case reports with therapeutic interventions. Basic case reports score low. The ultimate goal is to improve patient outcomes.
-*   **Pediatric Focus:** Articles that focus specifically on pediatric oncology receive a bonus.
-*   **Drug Testing:** Studies that involve drug testing (especially on patients or model systems, PDX is higher than just cell lines) are prioritized.
+*   **Disease Match:** Articles that cover the exact disease in question receive significant points. As an expert oncologist, carefully evaluate if the article's disease focus matches the patient's disease.
+*   **Clinical Relevance:** Clinical trials score highest, followed by case reports with therapeutic interventions.
+*   **Pediatric Focus:** Articles that focus specifically on pediatric oncology receive a significant bonus.
+*   **Treatment Results:** Studies showing actual treatment results with positive outcomes are highly valued. Document specific treatment outcomes in the drug_results field.
 *   **Specific Findings:** Articles that report specific actionable events are given more points.
-*   **Novelty:** Novel mechanisms or therapeutic avenues receive higher points.
+*   **Additional Factors:** Cell studies, mice studies, and other research aspects contribute additional points.
 
 Here's the specific information to extract for each article and their points:
 
@@ -60,12 +63,12 @@ Here's the specific information to extract for each article and their points:
 2.  **Link:** A link to the paper. (0 Points)
 3.  **Year:** Publication year (0 Points)
 4.  **Cancer Focus:** Whether the article relates to cancer (Boolean, true or false) (0 Points, but essential for filtering).
-5.  **Pediatric Focus:** Whether the article focuses on pediatric cancer specifically (Boolean, true or false) (If true, +10 points)
-6.  **Type of Cancer:** The specific type of cancer discussed (string, example: Leukemia (AML, ALL), Neuroblastoma, etc.). (0 points)
-7.  **Paper Type:** The type of study (e.g., clinical trial, case report, in vitro study, review, retrospective study, biological rationale). (+0 points for descriptive types, +10 points for clinical trial, -5 points for review)
-8. **Actionable Event:** Any specific actionable event (e.g., KMT2A rearrangement, FLT3 mutation, specific mutation) mentioned in the paper. (5 points per actionable event)
+5.  **Pediatric Focus:** Whether the article focuses on pediatric cancer specifically (Boolean, true or false) (If true, +20 points)
+6.  **Type of Cancer:** The specific type of cancer discussed (string, example: Leukemia (AML, ALL), Neuroblastoma, etc.). (If matches query disease exactly, +50 points)
+7.  **Paper Type:** The type of study (e.g., clinical trial, case report, in vitro study, review, retrospective study, biological rationale). (+40 points for clinical trial, -5 points for review)
+8. **Actionable Event:** Any specific actionable event (e.g., KMT2A rearrangement, FLT3 mutation, specific mutation) mentioned in the paper. (15 points per actionable event)
 9. **Drugs Tested:** Whether any drugs are mentioned as tested (Boolean true or false). (if true, +5 points)
-10. **Drug Results:** Specific results of drugs that were tested. (if drugs are mentioned, 5 points for each drug result)
+10. **Drug Results:** Specific results of drugs that were tested. (if positive results shown, +50 points for actual treatment)
 11. **Cell Studies:** Whether drugs were tested on cells in vitro (Boolean true or false) (if true, +5 points).
 12. **Mice Studies:** Whether drugs were tested on mice/PDX models (Boolean true or false) (if true, +10 points).
 13. **Case Report:** Whether the article presents a case report (Boolean true or false). (if true, +5 points)
@@ -85,10 +88,12 @@ Please analyze the article and provide a JSON response with the following struct
     "cancer_focus": true/false,
     "pediatric_focus": true/false,
     "type_of_cancer": "...",
+    "disease_match": true/false,      // Set to true if article's disease matches patient's disease
     "paper_type": "...",
     "actionable_events": ["...", "..."],
     "drugs_tested": true/false,
     "drug_results": ["...", "..."],
+    "treatment_shown": true/false,    // Set to true if article shows positive treatment outcomes
     "cell_studies": true/false,
     "mice_studies": true/false,
     "case_report": true/false,
@@ -167,9 +172,9 @@ Extract actionable events from the provided patient information, such as gene fu
       setArticles([]);
       setIsProcessing(true);
 
-      const eventsText = extractedEvents.join('\n');
+      const queryText = `${extractedDisease}\n${extractedEvents.join('\n')}`;
 
-      await retrieveAndRankArticles(eventsText, methodologyContent, (data) => {
+      await retrieveAndRankArticles(queryText, methodologyContent, extractedDisease, (data) => {
         if (data.type === 'metadata') {
           if (data.data.status === 'processing') {
             const totalArticles = data.data.total_articles;
