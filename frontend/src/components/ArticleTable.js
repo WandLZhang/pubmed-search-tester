@@ -48,7 +48,7 @@ const ArticleTable = ({ articles, currentArticle, totalArticles }) => {
                 <button onclick="window.close()" class="mb-4 text-blue-500 hover:text-blue-700">← Back to Table</button>
                 <div class="space-y-4">
                   <h2 class="text-2xl font-bold text-gray-800">Points Details</h2>
-                  <div class="text-4xl font-bold text-blue-600">${points} Points</div>
+                  <div class="text-4xl font-bold text-blue-600">${Math.round(points)} Points</div>
                   <div class="space-y-2">
                     ${breakdown.split(' | ').map(item => {
                       const [label, value] = item.split(': ');
@@ -111,7 +111,16 @@ const ArticleTable = ({ articles, currentArticle, totalArticles }) => {
                 <td className="px-4 py-2 text-sm border-t text-gray-500">{article.year}</td>
                 <td className="px-4 py-2 text-sm border-t text-gray-500">{article.cancer}</td>
                 <td className="px-4 py-2 text-sm border-t text-gray-500">{article.type}</td>
-                <td className="px-4 py-2 text-sm border-t text-gray-500">{article.events.join(', ')}</td>
+                <td className="px-4 py-2 text-sm border-t text-gray-500">
+                  {article.events.map((event, i) => (
+                    <React.Fragment key={i}>
+                      {i > 0 && ', '}
+                      <span className={event.matches_query ? 'font-bold text-green-600' : ''}>
+                        {event.event}
+                      </span>
+                    </React.Fragment>
+                  ))}
+                </td>
                 <td className="px-4 py-2 text-sm border-t text-gray-500">{article.drugs_tested ? 'Yes' : 'No'}</td>
                 <td className="px-4 py-2 text-sm border-t text-gray-500">{article.drug_results?.join(', ') || 'None'}</td>
                 <td className="px-4 py-2 text-sm border-t text-gray-500">
@@ -127,7 +136,7 @@ const ArticleTable = ({ articles, currentArticle, totalArticles }) => {
                     onClick={() => openInNewWindow([article.points, pointsBreakdown], 'points')}
                     className="flex items-center gap-1 text-gray-500 hover:text-gray-700"
                   >
-                    <span className="font-bold">{article.points}</span>
+                    <span className="font-bold">{Math.round(article.points)}</span>
                     <span className="text-blue-500">ℹ️</span>
                   </button>
                 </td>

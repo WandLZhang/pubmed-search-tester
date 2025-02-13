@@ -6,10 +6,37 @@ from google.cloud import bigquery
 import json
 import logging
 import time
+import math
+from datetime import datetime
 
 # Configure logging
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 logger = logging.getLogger(__name__)
+
+# Global variable to store journal impact data
+journal_impact_data = {}
+
+def fetch_journal_impact_data():
+    """Fetch journal impact data from BigQuery and store in memory."""
+    global journal_impact_data
+    query = """
+    SELECT
+      `title`,
+      `sjr`
+    FROM
+      `gemini-med-lit-review.journal_rank.scimagojr_2023`
+    ORDER BY 
+      sjr DESC
+    """
+    try:
+        query_job = bq_client.query(query)
+        results = query_job.result()
+        
+        # Convert to dictionary for faster lookups
+        journal_impact_data = {row['title']: float(row['sjr']) for row in results}
+        logger.info(f"Loaded {len(journal_impact_data)} journal impact records")
+    except Exception as e:
+        logger.error(f"Error fetching journal impact data: {str(e)}")
 
 # Initialize clients
 client = genai.Client(
@@ -19,10 +46,46 @@ client = genai.Client(
 )
 bq_client = bigquery.Client(project="playground-439016")
 
+def normalize_journal_score(sjr):
+    """Normalize journal SJR score to points between 0-25 to align with other scoring metrics."""
+    if not sjr:
+        return 0
+    # Use log scale to handle large range of SJR values (0 to 106094)
+    # Add 1 to avoid log(0)
+    # Multiply by 5 to align with other point values (5, 10, 15, 25)
+    normalized = math.log(sjr + 1) * 5
+    # Cap at 25 points to match the scale of other point calculations
+    return min(normalized, 25)
+
 def calculate_points(metadata, query_disease=None):
     """Calculate points based on article metadata and return both total and breakdown."""
     points = 0
     breakdown = {}
+    
+    # Journal impact points
+    if metadata.get('journal_title') and metadata.get('journal_sjr'):
+        journal_title = metadata['journal_title']
+        sjr = float(metadata['journal_sjr'])
+        if sjr > 0:
+            impact_points = normalize_journal_score(sjr)
+            points += impact_points
+            breakdown['journal_impact'] = impact_points
+            logger.info(f"Journal '{journal_title}' has SJR {sjr}, awarded {impact_points:.2f} points")
+        else:
+            logger.info(f"Journal '{journal_title}' has no SJR score")
+    
+    # Year-based points: -5 points per year difference from current year
+    current_year = datetime.now().year
+    if metadata.get('year'):
+        try:
+            article_year = int(metadata.get('year'))
+            year_diff = current_year - article_year
+            year_points = -5 * year_diff
+            points += year_points
+            breakdown['year'] = year_points
+        except (ValueError, TypeError):
+            # If year is not a valid integer, skip year-based points
+            pass
     
     # Disease Match: +50 points
     if metadata.get('disease_match'):
@@ -43,10 +106,11 @@ def calculate_points(metadata, query_disease=None):
         points -= 5
         breakdown['paper_type'] = -5
     
-    # Actionable Events: +15 points per event
+    # Actionable Events: +15 points per matched event
     actionable_events = metadata.get('actionable_events', [])
-    if actionable_events:
-        event_points = len(actionable_events) * 15
+    matched_events = sum(1 for event in actionable_events if event.get('matches_query', False))
+    if matched_events > 0:
+        event_points = matched_events * 15
         points += event_points
         breakdown['actionable_events'] = event_points
     
@@ -97,16 +161,28 @@ def calculate_points(metadata, query_disease=None):
     
     return points, breakdown
 
-def create_gemini_prompt(article_text, pmid, methodology_content=None, disease=None):
-    # Add disease context to the prompt if provided
+def create_gemini_prompt(article_text, pmid, methodology_content=None, disease=None, events_text=None):
+    # Add disease and events context to the prompt if provided
     disease_context = f"\nThe patient's disease is: {disease}\n" if disease else ""
+    events_context = f"\nThe patient's actionable events are: {events_text}\n" if events_text else ""
     
+    # Create journal context string
+    journal_context = ""
+    for title, sjr in journal_impact_data.items():
+        journal_context += f"- {title}: {sjr}\n"
+
     # Default methodology if none provided
     if not methodology_content:
-        methodology_content = f"""You are an expert pediatric oncologist and you are the chair of the International Leukemia Tumor Board. Your goal is to evaluate full research articles related to oncology, especially those concerning pediatric leukemia, to identify potential advancements in treatment and understanding of the disease.{disease_context}
+        methodology_content = f"""You are an expert pediatric oncologist and you are the chair of the International Leukemia Tumor Board. Your goal is to evaluate full research articles related to oncology, especially those concerning pediatric leukemia, to identify potential advancements in treatment and understanding of the disease.{disease_context}{events_context}
+
+Journal Impact Data (SJR scores):
+The following is a list of journal titles and their SJR scores. When extracting the journal title from the article, find the best matching title from this list and use its SJR score. If no match is found, use 0 as the SJR score.
+
+Journal Titles and Scores:
+{journal_context}
 
 <Article>
-{article}
+{article_text}
 </Article>
 
 <Instructions>
@@ -115,6 +191,7 @@ Your task is to read the provided full article and extract key information, and 
 As an expert oncologist:
 1. Evaluate if the article's disease focus matches the patient's disease. Set disease_match to true if the article's cancer type is relevant to the patient's condition.
 2. Analyze treatment outcomes. Set treatment_shown to true if the article demonstrates positive treatment results.
+3. For each actionable event you find in the article, determine if it matches any of the patient's actionable events. Set matches_query to true for exact or close matches.
 
 Please analyze the article and provide a JSON response with the following structure:
 
@@ -122,12 +199,19 @@ Please analyze the article and provide a JSON response with the following struct
   "article_metadata": {
     "title": "...",
     "year": "...",
+    "journal_title": "...",  // Extract the journal title from the article
+    "journal_sjr": 0,        // Look up the SJR score from the provided list. Use the score of the best matching journal title, or 0 if no match found
     "cancer_focus": true/false,
     "pediatric_focus": true/false,
     "type_of_cancer": "...",
     "disease_match": true/false,      // Set to true if article's disease is relevant to patient's condition
     "paper_type": "...",
-    "actionable_events": ["...", "..."],
+    "actionable_events": [
+      {
+        "event": "...",
+        "matches_query": true/false   // Set to true if this event matches any of the patient's actionable events
+      }
+    ],
     "drugs_tested": true/false,
     "drug_results": ["...", "..."],   // List of treatment outcomes
     "treatment_shown": true/false,    // Set to true if article shows positive treatment results
@@ -146,18 +230,21 @@ Important: The response must be valid JSON and follow this exact structure. Do n
     # Log the article text format
     logger.info(f"Article text to be inserted:\n{article_text}")
     
-    # Replace placeholders
-    prompt = methodology_content.replace("{article}", article_text)
+    # Replace all placeholders
+    prompt = methodology_content
+    prompt = prompt.replace("{article_text}", article_text)
     prompt = prompt.replace("{disease}", disease if disease else "")
+    prompt = prompt.replace("{events}", events_text if events_text else "")
+    prompt = prompt.replace("{journal_context}", journal_context)
     
     # Log the final prompt
     logger.info(f"Final prompt with article inserted:\n{prompt}")
     
     return prompt
 
-def analyze_with_gemini(article_text, pmid, methodology_content=None, disease=None):
+def analyze_with_gemini(article_text, pmid, methodology_content=None, disease=None, events_text=None):
     # Create prompt with JSON-only instruction
-    prompt = create_gemini_prompt(article_text, pmid, methodology_content, disease)
+    prompt = create_gemini_prompt(article_text, pmid, methodology_content, disease, events_text)
     prompt += "\n\nIMPORTANT: Return ONLY the raw JSON object. Do not include any explanatory text, markdown formatting, or code blocks. The response should start with '{' and end with '}' with no other characters before or after."
     
     # Configure Gemini
@@ -244,7 +331,7 @@ def analyze_with_gemini(article_text, pmid, methodology_content=None, disease=No
                 return None
                 
             metadata = analysis['article_metadata']
-            required_fields = ['title', 'cancer_focus', 'type_of_cancer', 'paper_type', 'actionable_events']
+            required_fields = ['title', 'journal_title', 'journal_sjr', 'cancer_focus', 'type_of_cancer', 'paper_type', 'actionable_events']
             for field in required_fields:
                 if field not in metadata:
                     logger.error(f"Invalid JSON structure - missing {field}")
@@ -298,7 +385,7 @@ def create_bq_query(events_text):
       TABLE `playground-439016.pmid_uscentral.pmid_embed_nonzero`,
       'ml_generate_embedding_result',
       (SELECT embedding_col FROM query_embedding),
-      top_k => 15
+      top_k => 20
     ) results
     JOIN `playground-439016.pmid_uscentral.pmid_embed_nonzero` base 
     ON results.base.name = base.name
@@ -343,7 +430,7 @@ def stream_response(events_text, methodology_content=None, disease=None):
             
             # Analyze with Gemini and prepare complete response object
             try:
-                analysis = analyze_with_gemini(content, pmid, methodology_content, disease)
+                analysis = analyze_with_gemini(content, pmid, methodology_content, disease, events_text)
                 if analysis:
                     # Create complete response object
                     response_obj = {
@@ -399,6 +486,9 @@ def stream_response(events_text, methodology_content=None, disease=None):
                 "message": str(e)
             }
         }) + "\n"
+
+# Fetch journal impact data when module loads
+fetch_journal_impact_data()
 
 @functions_framework.http
 def analyze_articles(request):

@@ -42,12 +42,25 @@ Diagnostic tests:
 
 The patient's disease is: {disease}
 
+The patient's actionable events are: {events}
+
+Journal Impact Data (SJR scores):
+The following is a list of journal titles and their SJR scores. When extracting the journal title from the article, find the best matching title from this list and use its SJR score. If no match is found, use 0 as the SJR score.
+
+Journal Titles and Scores:
+{journal_context}
+
 <Article>
-{article}
+{article_text}
 </Article>
 
 <Instructions>
 Your task is to read the provided full article and extract key information, and then assess the article's relevance and potential impact. You will generate a JSON object containing metadata and a point-based assessment of the article's value. Please use a consistent JSON structure.
+
+As an expert oncologist:
+1. Evaluate if the article's disease focus matches the patient's disease. Set disease_match to true if the article's cancer type is relevant to the patient's condition.
+2. Analyze treatment outcomes. Set treatment_shown to true if the article demonstrates positive treatment results.
+3. For each actionable event you find in the article, determine if it matches any of the patient's actionable events. Set matches_query to true for exact or close matches.
 
 The scoring system will assess the following (not necessarily exhaustive and inferred):
 *   **Disease Match:** Articles that cover the exact disease in question receive significant points. As an expert oncologist, carefully evaluate if the article's disease focus matches the patient's disease.
@@ -66,7 +79,7 @@ Here's the specific information to extract for each article and their points:
 5.  **Pediatric Focus:** Whether the article focuses on pediatric cancer specifically (Boolean, true or false) (If true, +20 points)
 6.  **Type of Cancer:** The specific type of cancer discussed (string, example: Leukemia (AML, ALL), Neuroblastoma, etc.). (If matches query disease exactly, +50 points)
 7.  **Paper Type:** The type of study (e.g., clinical trial, case report, in vitro study, review, retrospective study, biological rationale). (+40 points for clinical trial, -5 points for review)
-8. **Actionable Event:** Any specific actionable event (e.g., KMT2A rearrangement, FLT3 mutation, specific mutation) mentioned in the paper. (15 points per actionable event)
+8. **Actionable Event:** Any specific actionable event (e.g., KMT2A rearrangement, FLT3 mutation, specific mutation) mentioned in the paper. Each event will be evaluated against the patient's extracted actionable events, and only matching events will receive points (15 points per matching event)
 9. **Drugs Tested:** Whether any drugs are mentioned as tested (Boolean true or false). (if true, +5 points)
 10. **Drug Results:** Specific results of drugs that were tested. (if positive results shown, +50 points for actual treatment)
 11. **Cell Studies:** Whether drugs were tested on cells in vitro (Boolean true or false) (if true, +5 points).
@@ -83,14 +96,20 @@ Please analyze the article and provide a JSON response with the following struct
 {
   "article_metadata": {
     "title": "...",
-    "link": "...",
+    "journal_title": "...",  // Extract the journal title from the article
+    "journal_sjr": 0,        // Look up the SJR score from the provided list. Use the score of the best matching journal title, or 0 if no match found
     "year": "...",
     "cancer_focus": true/false,
     "pediatric_focus": true/false,
     "type_of_cancer": "...",
     "disease_match": true/false,      // Set to true if article's disease matches patient's disease
     "paper_type": "...",
-    "actionable_events": ["...", "..."],
+    "actionable_events": [
+      {
+        "event": "...",
+        "matches_query": true/false   // Set to true if this event matches any of the patient's extracted actionable events
+      }
+    ],
     "drugs_tested": true/false,
     "drug_results": ["...", "..."],
     "treatment_shown": true/false,    // Set to true if article shows positive treatment outcomes
@@ -210,12 +229,17 @@ Extract actionable events from the provided patient information, such as gene fu
               year: analysis.year || 'N/A',
               cancer: analysis.type_of_cancer || 'N/A',
               type: analysis.paper_type || 'N/A',
-              events: analysis.actionable_events || [],
+              events: analysis.actionable_events.map(event => ({
+                event: typeof event === 'object' ? event.event : event,
+                matches_query: typeof event === 'object' ? event.matches_query : false
+              })) || [],
               drugs_tested: analysis.drugs_tested || false,
               drug_results: analysis.drug_results || [],
               points: analysis.overall_points || 0,
               point_breakdown: analysis.point_breakdown || {},
-              fullText: data.data.analysis.full_article_text || ''
+              fullText: data.data.analysis.full_article_text || '',
+              journal_title: analysis.journal_title || 'N/A',
+              journal_sjr: analysis.journal_sjr || 0
             };
             
             setArticles(current => {
